@@ -1,0 +1,13 @@
+# .gitignore
+__pycache__/
+*.pyc
+.env
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+.qdrant_data/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
