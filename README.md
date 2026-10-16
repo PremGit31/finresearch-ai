@@ -38,7 +38,7 @@ flowchart LR
 - Docker with Docker Compose (recommended for running the complete app and Qdrant)
 - A Google Gemini API key for AI analysis and embeddings: [Get an API key](https://aistudio.google.com/apikey)
 
-Finnhub and NewsAPI credentials are optional. Some tools use public or unauthenticated data sources; availability and rate limits are controlled by those providers.
+Finnhub and NewsAPI credentials are optional, I have used them in this project. Some tools use public or unauthenticated data sources; availability and rate limits are controlled by those providers.
 
 ## Run With Docker Compose
 
