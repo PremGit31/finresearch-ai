@@ -4,10 +4,44 @@ MCP Server exposing financial data tools.
 Run with: python -m src.mcp.financial_data_server
 """
 import json
+import math
+from collections.abc import Mapping
+
 import yfinance as yf
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("FinancialData")
+
+
+def _json_safe(value):
+    """Convert provider values to strict JSON-compatible values."""
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist):
+        return _json_safe(tolist())
+
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            scalar = item()
+        except (TypeError, ValueError):
+            pass
+        else:
+            if scalar is not value:
+                return _json_safe(scalar)
+    return value
+
+
+def _dump_json(value) -> str:
+    return json.dumps(_json_safe(value), default=str, allow_nan=False, indent=2)
 
 
 @mcp.tool()
@@ -16,7 +50,7 @@ def stock_quote(ticker: str) -> str:
     try:
         stock = yf.Ticker(ticker.upper())
         info = stock.info
-        return json.dumps({
+        return _dump_json({
             "ticker": ticker.upper(),
             "name": info.get("longName", ticker),
             "price": info.get("currentPrice"),
@@ -29,9 +63,9 @@ def stock_quote(ticker: str) -> str:
             "market_cap": info.get("marketCap"),
             "pe_ratio": info.get("trailingPE"),
             "dividend_yield": info.get("dividendYield"),
-        }, default=str, indent=2)
+        })
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _dump_json({"error": str(e)})
 
 
 @mcp.tool()
@@ -69,9 +103,9 @@ def company_financials(ticker: str) -> str:
                 if not (hasattr(v, '__iter__') and not isinstance(v, str))
             }
 
-        return json.dumps(result, default=str, indent=2)
+        return _dump_json(result)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _dump_json({"error": str(e)})
 
 
 @mcp.tool()
@@ -98,9 +132,9 @@ def compare_stocks(tickers: str) -> str:
                 "debt_to_equity": info.get("debtToEquity"),
             })
 
-        return json.dumps(comparison, default=str, indent=2)
+        return _dump_json(comparison)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _dump_json({"error": str(e)})
 
 
 if __name__ == "__main__":

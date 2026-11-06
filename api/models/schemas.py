@@ -17,11 +17,18 @@ class ResearchResponse(BaseModel):
     status: str
     ticker: str
     query: str
+    conversation_id: str
     report: str
     citations: list[dict]
     fact_check: dict
     phases_completed: list[str]
     errors: list[str]
+
+
+class FollowUpRequest(BaseModel):
+    """Request model for a question about a generated research report."""
+    conversation_id: str = Field(..., min_length=1)
+    question: str = Field(..., min_length=1, max_length=4000)
 
 
 class DocumentUploadResponse(BaseModel):

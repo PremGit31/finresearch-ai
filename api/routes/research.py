@@ -2,11 +2,11 @@
 """
 Research endpoints — trigger and retrieve research reports.
 """
-import asyncio
 from fastapi import APIRouter, HTTPException
 from langchain_core.messages import HumanMessage
 
-from api.models.schemas import ResearchRequest, ResearchResponse
+from api.models.schemas import FollowUpRequest, ResearchRequest, ResearchResponse
+from src.agents.conversation import ask_follow_up, start_report_conversation
 from src.agents.graph import research_graph
 from src.agents.state import ResearchState
 from src.tools.document_search import set_vector_store
@@ -68,12 +68,17 @@ async def analyze_company(request: ResearchRequest):
         if result.get("final_report"):
             phases.append("report_generation")
 
+        report = result.get("final_report", "Report generation failed.")
+        citations = result.get("citations", [])
+        conversation_id = await start_report_conversation(report, citations)
+
         return ResearchResponse(
             status="complete",
             ticker=request.ticker.upper(),
             query=request.query,
-            report=result.get("final_report", "Report generation failed."),
-            citations=result.get("citations", []),
+            conversation_id=conversation_id,
+            report=report,
+            citations=citations,
             fact_check=result.get("fact_check_results", {}),
             phases_completed=phases,
             errors=result.get("errors", []),
@@ -84,6 +89,21 @@ async def analyze_company(request: ResearchRequest):
             status_code=500,
             detail=f"Research analysis failed: {str(e)}",
         )
+
+
+@router.post("/follow-up")
+async def research_follow_up(request: FollowUpRequest):
+    """Answer a question using the context and message history for a report."""
+    try:
+        answer = await ask_follow_up(request.conversation_id, request.question)
+        return {"answer": answer, "conversation_id": request.conversation_id}
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Follow-up question failed: {exc}",
+        ) from exc
 
 
 @router.post("/quick-quote")

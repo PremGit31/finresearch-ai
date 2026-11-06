@@ -8,6 +8,8 @@ import json
 import time
 from pathlib import Path
 
+from src.utils.helpers import escape_currency_for_markdown
+
 # Page config
 st.set_page_config(
     page_title="FinResearch AI",
@@ -29,6 +31,11 @@ def check_api_health():
 
 
 def main():
+    st.session_state.setdefault("research_result", None)
+    st.session_state.setdefault("followup_messages", [])
+    st.session_state.setdefault("followup_open", False)
+    st.session_state.setdefault("followup_input_version", 0)
+
     # Custom CSS
     st.markdown("""
     <style>
@@ -211,73 +218,10 @@ def main():
                         status_text.write("✅ Analysis complete!")
 
                         if resp.status_code == 200:
-                            result = resp.json()
-
-                            # Display report
-                            st.divider()
-                            st.subheader(f"📊 Investment Research Report: {ticker}")
-
-                            # Phases completed
-                            phases_completed = result.get("phases_completed", [])
-                            cols = st.columns(len(phases_completed))
-                            phase_icons = {
-                                "research": "🔍",
-                                "analysis": "🧠",
-                                "fact_check": "✅",
-                                "report_generation": "📝",
-                            }
-                            for col, phase in zip(cols, phases_completed):
-                                icon = phase_icons.get(phase, "📌")
-                                col.success(f"{icon} {phase.replace('_', ' ').title()}")
-
-                            # Main report
-                            st.markdown(result.get("report", "No report generated."))
-
-                            # Errors
-                            errors = result.get("errors", [])
-                            if errors:
-                                with st.expander("⚠️ Data Collection Warnings"):
-                                    for err in errors:
-                                        st.warning(err)
-
-                            # Citations
-                            citations = result.get("citations", [])
-                            if citations:
-                                with st.expander(
-                                    f"📚 Sources & Citations ({len(citations)} sources)"
-                                ):
-                                    for cite in citations:
-                                        st.markdown(
-                                            f"**{cite.get('id', '?')}** "
-                                            f"[{cite.get('source_type', '').upper()}] "
-                                            f"{cite.get('source_name', 'Unknown')}"
-                                        )
-                                        st.caption(
-                                            f"Excerpt: \"{cite.get('excerpt', '')[:150]}...\""
-                                        )
-
-                            # Fact-check
-                            fc = result.get("fact_check", {})
-                            if fc.get("report"):
-                                with st.expander("✅ Fact-Check Report"):
-                                    st.markdown(fc["report"])
-
-                            # Download report
-                            report_text = result.get("report", "")
-                            st.download_button(
-                                label="📥 Download Report (Markdown)",
-                                data=report_text,
-                                file_name=f"{ticker}_research_report.md",
-                                mime="text/markdown",
-                            )
-
-                            # JSON export
-                            st.download_button(
-                                label="📥 Download Full Data (JSON)",
-                                data=json.dumps(result, indent=2),
-                                file_name=f"{ticker}_research_data.json",
-                                mime="application/json",
-                            )
+                            st.session_state["research_result"] = resp.json()
+                            st.session_state["followup_messages"] = []
+                            st.session_state["followup_open"] = False
+                            st.session_state["followup_input_version"] = 0
 
                         else:
                             st.error(f"Analysis failed: {resp.text}")
@@ -286,6 +230,120 @@ def main():
                         st.error("Request timed out. The analysis may take a few minutes.")
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
+
+        result = st.session_state.get("research_result")
+        if result:
+            st.divider()
+            st.subheader(f"📊 Investment Research Report: {result.get('ticker', ticker)}")
+
+            phases_completed = result.get("phases_completed", [])
+            if phases_completed:
+                cols = st.columns(len(phases_completed))
+                phase_icons = {
+                    "research": "🔍",
+                    "analysis": "🧠",
+                    "fact_check": "✅",
+                    "report_generation": "📝",
+                }
+                for col, phase in zip(cols, phases_completed):
+                    icon = phase_icons.get(phase, "📌")
+                    col.success(f"{icon} {phase.replace('_', ' ').title()}")
+
+            report_text = result.get("report", "No report generated.")
+            st.markdown(escape_currency_for_markdown(report_text))
+
+            if result.get("conversation_id"):
+                for message in st.session_state["followup_messages"]:
+                    with st.chat_message(message["role"]):
+                        st.markdown(
+                            escape_currency_for_markdown(message["content"])
+                        )
+
+                if not st.session_state["followup_open"]:
+                    if st.button("💬 Ask a follow-up", key="open_followup"):
+                        st.session_state["followup_open"] = True
+
+                if st.session_state["followup_open"]:
+                    with st.form(
+                        f"followup_form_{st.session_state['followup_input_version']}"
+                    ):
+                        question = st.text_area(
+                            "Your follow-up question",
+                            placeholder="Ask something about this report...",
+                            key=f"followup_question_{st.session_state['followup_input_version']}",
+                        )
+                        submitted = st.form_submit_button("Send follow-up")
+
+                    if submitted:
+                        if not question.strip():
+                            st.warning("Enter a follow-up question.")
+                        else:
+                            try:
+                                response = httpx.post(
+                                    f"{API_BASE}/research/follow-up",
+                                    json={
+                                        "conversation_id": result["conversation_id"],
+                                        "question": question.strip(),
+                                    },
+                                    timeout=120,
+                                )
+                                if response.status_code == 200:
+                                    st.session_state["followup_messages"].extend([
+                                        {"role": "user", "content": question.strip()},
+                                        {
+                                            "role": "assistant",
+                                            "content": response.json()["answer"],
+                                        },
+                                    ])
+                                    st.session_state["followup_input_version"] += 1
+                                    st.rerun()
+                                else:
+                                    st.error(f"Follow-up failed: {response.text}")
+                            except httpx.TimeoutException:
+                                st.error("The follow-up request timed out. Please try again.")
+                            except Exception as exc:
+                                st.error(f"Follow-up failed: {exc}")
+
+            errors = result.get("errors", [])
+            if errors:
+                with st.expander("⚠️ Data Collection Warnings"):
+                    for err in errors:
+                        st.warning(err)
+
+            citations = result.get("citations", [])
+            if citations:
+                with st.expander(
+                    f"📚 Sources & Citations ({len(citations)} sources)"
+                ):
+                    for cite in citations:
+                        st.markdown(
+                            f"**{cite.get('id', '?')}** "
+                            f"[{cite.get('source_type', '').upper()}] "
+                            f"{cite.get('source_name', 'Unknown')}"
+                        )
+                        st.caption(
+                            f"Excerpt: \"{cite.get('excerpt', '')[:150]}...\""
+                        )
+
+            fact_check = result.get("fact_check", {})
+            if fact_check.get("report"):
+                with st.expander("✅ Fact-Check Report"):
+                    st.markdown(
+                        escape_currency_for_markdown(fact_check["report"])
+                    )
+
+            st.download_button(
+                label="📥 Download Report (Markdown)",
+                data=report_text,
+                file_name=f"{result.get('ticker', ticker)}_research_report.md",
+                mime="text/markdown",
+            )
+            st.download_button(
+                label="📥 Download Full Data (JSON)",
+                data=json.dumps(result, indent=2),
+                file_name=f"{result.get('ticker', ticker)}_research_data.json",
+                mime="application/json",
+            )
 
     # Tab 2: Quick Quote
     with tab2:
@@ -305,7 +363,11 @@ def main():
                     )
                     if resp.status_code == 200:
                         data = resp.json()
-                        st.markdown(data.get("data", "No data"))
+                        st.markdown(
+                            escape_currency_for_markdown(
+                                data.get("data", "No data")
+                            )
+                        )
                     else:
                         st.error(f"Error: {resp.text}")
                 except Exception as e:

@@ -2,12 +2,14 @@
 """
 Analyst node — performs deep analysis on research data.
 """
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import AIMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from config.settings import GEMINI_API_KEY, GEMINI_MODEL
 from src.agents.state import ResearchState
 from src.tools.calculator import financial_calculator
+from src.agents.tool_calling import invoke_with_tools
+from src.mcp.client import get_mcp_tools
 
 
 ANALYST_SYSTEM_PROMPT = """You are a Senior Financial Analyst at a top-tier investment bank.
@@ -38,9 +40,6 @@ def create_analyst_node():
         temperature=0.2,
     )
 
-    tools = [financial_calculator]
-    llm_with_tools = llm.bind_tools(tools)
-
     async def analyst_node(state: ResearchState) -> dict:
         """Analyst node that performs deep financial analysis."""
         query = state["query"]
@@ -53,6 +52,14 @@ def create_analyst_node():
             if isinstance(value, str):
                 data_text += f"\n### {key.replace('_', ' ').title()}\n{value}\n"
 
+        errors = list(state.get("errors", []))
+        try:
+            mcp_tools = await get_mcp_tools()
+        except Exception as exc:
+            mcp_tools = []
+            errors.append(f"Analyst MCP tool discovery failed: {exc}")
+
+        tools = [financial_calculator, *mcp_tools]
         analysis_prompt = f"""{ANALYST_SYSTEM_PROMPT}
 
 **Research Query:** {query}
@@ -61,19 +68,22 @@ def create_analyst_node():
 **Research Data:**
 {data_text[:12000]}
 
-Produce a comprehensive investment analysis. Include specific numbers, ratios, and 
-cite your sources using [Source X] markers. Structure your analysis with clear sections.
-
-If you need to perform calculations (DCF, CAGR, etc.), describe what you would calculate 
-and provide the analysis based on the available data.
+Use MCP company financials, stock quote, and document-search tools when useful to
+independently inspect source data. Use the financial_calculator tool for any
+quantitative calculation you cite, and include the exact inputs and returned result
+in a "Calculation checks" section. If a source or calculation is unavailable, state
+that limitation instead of estimating. Produce a balanced analysis with sections,
+specific numbers, citations, and a checkable-claims section.
 """
 
-        response = await llm.ainvoke([HumanMessage(content=analysis_prompt)])
-
-        analysis = response.content
+        analysis, _, tool_errors = await invoke_with_tools(
+            llm, tools, analysis_prompt
+        )
+        errors.extend(tool_errors)
 
         return {
             "analysis": analysis,
+            "errors": errors,
             "current_phase": "analysis_complete",
             "messages": [
                 AIMessage(

@@ -4,6 +4,7 @@ MCP Server exposing document search capabilities.
 Run with: python -m src.mcp.document_search_server
 """
 import json
+import logging
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("DocumentSearch")
@@ -19,7 +20,9 @@ def init_vector_store():
             from src.vectorstore.qdrant_store import FinancialVectorStore
             _vector_store = FinancialVectorStore()
         except Exception as e:
-            print(f"Warning: Could not initialize vector store: {e}")
+            logging.getLogger(__name__).warning(
+                "Could not initialize vector store: %s", e
+            )
 
 
 @mcp.tool()

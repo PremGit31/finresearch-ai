@@ -11,3 +11,4 @@ data/processed/*
 dist/
 build/
 .pytest_cache/
+RAG test docs/FY26_Q4_Consolidated_Financial_Statements.pdf

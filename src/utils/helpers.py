@@ -37,6 +37,11 @@ def truncate_text(text: str, max_length: int = 500) -> str:
     return text[:max_length - 3] + "..."
 
 
+def escape_currency_for_markdown(text: str) -> str:
+    """Keep dollar-denominated amounts from being parsed as inline math."""
+    return re.sub(r"(?<!\\)\$(?=\s?\d)", r"\\$", text)
+
+
 def sanitize_ticker(ticker: str) -> str:
     """Clean and validate a ticker symbol."""
     cleaned = re.sub(r'[^A-Za-z.]', '', ticker).upper()

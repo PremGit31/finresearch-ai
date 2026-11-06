@@ -42,6 +42,7 @@ async def root():
             "upload_document": "POST /documents/upload",
             "search_documents": "POST /documents/search",
             "run_analysis": "POST /research/analyze",
+            "follow_up": "POST /research/follow-up",
             "quick_quote": "POST /research/quick-quote",
         },
     }

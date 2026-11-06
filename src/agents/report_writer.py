@@ -8,6 +8,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from config.settings import GEMINI_API_KEY, GEMINI_MODEL
 from src.agents.state import ResearchState
 from src.citations.citation_tracker import CitationTracker
+from src.agents.tool_calling import stringify_model_content
 
 
 REPORT_WRITER_PROMPT = """You are a professional Investment Research Report Writer.
@@ -35,6 +36,7 @@ Requirements:
 - Be balanced — present both sides
 - Professional, concise language
 - Include a disclaimer that this is AI-generated research
+- Resolve or qualify claims marked contradicted, not found, or inconclusive by the fact-checker; never present them as verified.
 
 IMPORTANT: At the end, include a "Sources & Citations" section listing all references.
 """
@@ -95,7 +97,7 @@ Generate the complete investment research report now.
 
         response = await llm.ainvoke([HumanMessage(content=prompt)])
 
-        report = response.content
+        report = stringify_model_content(response.content)
 
         # Add disclaimer
         disclaimer = (

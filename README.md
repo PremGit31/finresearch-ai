@@ -26,6 +26,8 @@ flowchart LR
 ### Features
 
 - Multi-step research pipeline orchestrated with LangGraph.
+- Research and analysis nodes execute model-requested tools, including tools discovered from the project's MCP servers.
+- Fact-checking re-searches claims through MCP document search and independently recomputes supported growth, CAGR, and ratio calculations.
 - Financial tools for stock quotes and history, company ratios, news search, SEC filings, and calculations such as DCF, CAGR, and WACC.
 - Document ingestion for PDF, TXT, Markdown, and HTML files, with chunking and embeddings stored in Qdrant.
 - FastAPI endpoints with interactive OpenAPI documentation.
@@ -75,6 +77,8 @@ Finnhub and NewsAPI credentials are optional, I have used them in this project. 
 
 Stop the services with `docker compose down`. Qdrant data is stored in a named Docker volume and is retained when the services stop. Use `docker compose down -v` only when you intend to delete that stored data.
 
+After a report is generated, select **Ask a follow-up** below it to continue asking questions with the report and its sources as context. Conversation history is held in API memory and is lost when the API container restarts.
+
 ## Run Locally
 
 Use this path for API development. Start Qdrant separately, then run the API from the project root.
@@ -109,6 +113,14 @@ curl -X POST http://localhost:8000/research/analyze \
   -d '{"ticker":"AAPL","query":"Summarize recent performance, valuation, and key risks."}'
 ```
 
+Use the `conversation_id` returned with the report to ask a follow-up:
+
+```bash
+curl -X POST http://localhost:8000/research/follow-up \
+  -H "Content-Type: application/json" \
+  -d '{"conversation_id":"<conversation_id>","question":"What are the main valuation risks?"}'
+```
+
 Get a quote:
 
 ```bash
@@ -138,6 +150,7 @@ curl -X POST "http://localhost:8000/documents/search?query=revenue%20growth&num_
 | `GET` | `/` | API overview |
 | `GET` | `/health` | API and dependency health |
 | `POST` | `/research/analyze` | Run the multi-agent research workflow |
+| `POST` | `/research/follow-up` | Ask a question in a report conversation |
 | `POST` | `/research/quick-quote?ticker=AAPL` | Fetch a stock quote |
 | `POST` | `/documents/upload` | Upload and index a supported document |
 | `GET` | `/documents/info` | Get vector-store collection information |
@@ -161,7 +174,9 @@ Supported file extensions are `.pdf`, `.txt`, `.md`, `.html`, and `.htm`. Docume
 
 ## MCP Servers
 
-The MCP servers use standard input/output transport. Run one server per MCP client configuration:
+The LangGraph research and analysis nodes act as MCP clients and launch these servers over standard input/output. This means MCP-backed market and document tools are offered directly to the Gemini tool-calling loop; the servers do not need to be started separately when running the app.
+
+The servers can also be run separately for other MCP clients:
 
 ```bash
 python -m src.mcp.financial_data_server
@@ -172,6 +187,10 @@ python -m src.mcp.document_search_server
 ```
 
 The document search server requires Qdrant and an initialized document collection. Configure the commands in your MCP client's settings as appropriate for that client.
+
+Financial-data MCP tools encode non-finite provider values (such as `NaN` or infinity) as JSON `null`, so missing metrics cannot produce invalid JSON responses.
+
+Fact-checking performs a fresh document search for extracted claims rather than treating the analyst's summary as evidence. Its arithmetic checks only establish that the stated inputs produce the claimed result; they do not prove that the inputs themselves are correct. Evidence coverage depends on the documents indexed in Qdrant.
 
 ## Tests
 
