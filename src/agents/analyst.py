@@ -72,7 +72,9 @@ Use MCP company financials, stock quote, and document-search tools when useful t
 independently inspect source data. Use the financial_calculator tool for any
 quantitative calculation you cite, and include the exact inputs and returned result
 in a "Calculation checks" section. If a source or calculation is unavailable, state
-that limitation instead of estimating. Produce a balanced analysis with sections,
+that limitation instead of estimating. Use quote or valuation metrics as current
+only when their provenance says status=fresh and includes an as-of timestamp.
+Never use missing, stale, or unverified market values as current. Produce a balanced analysis with sections,
 specific numbers, citations, and a checkable-claims section.
 """
 

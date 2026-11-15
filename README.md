@@ -215,6 +215,15 @@ Some tool tests call external market and news data sources, so they require netw
 
 The model names and document chunking settings are defined in `config/settings.py`.
 
+Market, news, and SEC provider requests use a 10-second timeout and at most two retries
+after the initial attempt. Quote and ratio values include provider, fetch time,
+as-of time, units, metric definition, and freshness status. Quote values older
+than 24 hours and financial-statement values older than 120 days are withheld
+from analysis as unavailable. Equivalent metrics are compared only when their
+definitions, units, and observation dates match; conflicts are reported rather
+than averaged. These policies are currently code settings, not environment
+variables.
+
 ## Disclaimer
 
 FinResearch AI is an experimental research tool. Its output may be incomplete, delayed, or inaccurate and is not investment advice. Verify information with primary sources and consult a qualified financial professional before making investment decisions. Market data and third-party services are subject to their providers' terms, availability, and rate limits.

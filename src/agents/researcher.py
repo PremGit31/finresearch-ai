@@ -2,6 +2,8 @@
 """
 Researcher node — gathers data from multiple sources.
 """
+import json
+
 from langchain_core.messages import AIMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -17,7 +19,24 @@ from src.tools import (
 )
 from src.citations.citation_tracker import CitationTracker
 from src.agents.tool_calling import invoke_with_tools
+from src.agents.data_quality import tool_result_error
 from src.mcp.client import get_mcp_tools
+
+
+def _append_tool_result(existing, result: str):
+    """Keep repeated structured provider results parseable for reconciliation."""
+    if not isinstance(existing, str):
+        return result
+    try:
+        previous_payloads = json.loads(existing)
+        current_payloads = json.loads(result)
+    except json.JSONDecodeError:
+        return f"{existing}\n\n{result}"
+    if not isinstance(previous_payloads, list):
+        previous_payloads = [previous_payloads]
+    if not isinstance(current_payloads, list):
+        current_payloads = [current_payloads]
+    return json.dumps([*previous_payloads, *current_payloads], default=str)
 
 
 def create_researcher_node():
@@ -67,6 +86,9 @@ Use the MCP stock quote and company financials tools, the MCP document search to
 and relevant news/SEC/history tools when available. Do not invent results. If a
 tool fails or returns no evidence, say so. Cite tool names and preserve important
 numbers, dates, source links, and document excerpts in your synthesis.
+Use market or valuation numbers only when their metric record is marked fresh.
+Treat missing, stale, and unverified values as unavailable; never describe them
+as current. Keep source, as-of date, units, and metric definition with each value.
 
 Previously gathered data:
 {previous_text[:5000] or "None"}
@@ -79,10 +101,10 @@ financial health, recent developments, risks, and opportunities."""
         for item in results:
             key = item["name"]
             result = item["result"]
+            if tool_result_error(result):
+                continue
             existing = research_data.get(key)
-            research_data[key] = (
-                f"{existing}\n\n{result}" if isinstance(existing, str) else result
-            )
+            research_data[key] = _append_tool_result(existing, result)
             source_type = (
                 "document" if "document" in key
                 else "news" if "news" in key

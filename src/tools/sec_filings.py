@@ -5,7 +5,8 @@ Uses the free SEC EDGAR API (EDGAR Full-Text Search).
 """
 import httpx
 from langchain_core.tools import tool
-from config.settings import SEC_USER_AGENT
+from config.settings import PROVIDER_TIMEOUT_SECONDS, SEC_USER_AGENT
+from src.tools.provider_utils import retry_provider_call
 
 
 @tool
@@ -26,24 +27,10 @@ def get_sec_filings(
         List of recent SEC filings with dates, descriptions, and links.
     """
     try:
-        # Step 1: Get CIK number from ticker
         headers = {"User-Agent": SEC_USER_AGENT}
 
-        cik_url = f"https://efts.sec.gov/LATEST/search-index?q=%22{ticker}%22&dateRange=custom&startdt=2020-01-01&forms={filing_type}"
-        
-        # Use the EDGAR full-text search API
-        search_url = "https://efts.sec.gov/LATEST/search-index"
-        params = {
-            "q": f'"{ticker}"',
-            "forms": filing_type,
-            "dateRange": "custom",
-            "startdt": "2020-01-01",
-        }
-
-        # Alternative: use the company tickers JSON
         tickers_url = "https://www.sec.gov/files/company_tickers.json"
-        resp = httpx.get(tickers_url, headers=headers, timeout=10)
-        resp.raise_for_status()
+        resp = _get_with_retry(tickers_url, headers)
         tickers_data = resp.json()
 
         cik = None
@@ -56,10 +43,8 @@ def get_sec_filings(
         if not cik:
             return f"Could not find CIK for ticker: {ticker}"
 
-        # Step 2: Get filings from EDGAR submissions API
         submissions_url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-        resp = httpx.get(submissions_url, headers=headers, timeout=10)
-        resp.raise_for_status()
+        resp = _get_with_retry(submissions_url, headers)
         data = resp.json()
 
         recent = data.get("filings", {}).get("recent", {})
@@ -102,3 +87,16 @@ def get_sec_filings(
 
     except Exception as e:
         return f"Error fetching SEC filings for {ticker}: {str(e)}"
+
+
+def _get_with_retry(url: str, headers: dict) -> httpx.Response:
+    def request():
+        response = httpx.get(
+            url,
+            headers=headers,
+            timeout=PROVIDER_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        return response
+
+    return retry_provider_call("SEC EDGAR", request)

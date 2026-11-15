@@ -8,6 +8,8 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool
 
+from src.agents.data_quality import tool_result_error, tool_result_warnings
+
 
 def _json_safe(value: Any) -> Any:
     """Replace non-finite numeric values with null before JSON serialization."""
@@ -102,6 +104,15 @@ async def invoke_with_tools(
                     error = f"{call['name']} failed: {exc}"
                     errors.append(error)
                     result = error
+
+            result_error = tool_result_error(result)
+            if result_error and result_error not in errors:
+                errors.append(f"{call['name']} returned an error: {result_error}")
+            elif not result_error:
+                errors.extend(
+                    f"{call['name']}: {warning}"
+                    for warning in tool_result_warnings(result)
+                )
 
             tool_results.append({
                 "name": call["name"],

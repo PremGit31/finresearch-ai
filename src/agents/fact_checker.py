@@ -174,6 +174,9 @@ Use "verified" only when the evidence directly supports the statement; use
 "contradicted" when evidence conflicts; "not_found" when a usable source was
 searched but does not support it; and "inconclusive" when evidence is unavailable
 or ambiguous. Keep evidence excerpts concise and identify the source when shown.
+Treat metrics with missing, stale, or unverified provenance as unavailable. A
+market value may support a current claim only when its as-of timestamp passes
+the freshness policy; a fetch timestamp alone is not an as-of timestamp.
 
 Claims and independently retrieved evidence:
 {evidence_by_claim}

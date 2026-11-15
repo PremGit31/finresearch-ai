@@ -78,6 +78,23 @@ async def test_tool_call_loop_executes_tool_and_returns_its_evidence():
     assert errors == []
 
 
+@pytest.mark.asyncio
+async def test_provider_error_payload_is_recorded_as_workflow_error():
+    tool = FakeTool("stock_quote", '{"error": "provider timed out"}')
+    llm = ToolCallingLLM(
+        "stock_quote",
+        {"ticker": "AAPL"},
+        expected_result='{"error": "provider timed out"}',
+    )
+
+    _, results, errors = await invoke_with_tools(
+        llm, [tool], "Fetch a quote."
+    )
+
+    assert results[0]["result"] == '{"error": "provider timed out"}'
+    assert any("provider timed out" in error for error in errors)
+
+
 @pytest.mark.parametrize(
     ("content", "expected"),
     [
@@ -135,6 +152,36 @@ async def test_researcher_can_execute_a_discovered_mcp_tool(monkeypatch):
     assert mcp_tool.calls == [{"ticker": "AAPL"}]
     assert "stock_quote" in result["research_data"]
     assert result["citations"][0]["source_name"] == "stock_quote"
+
+
+@pytest.mark.asyncio
+async def test_researcher_does_not_store_provider_error_as_research_data(monkeypatch):
+    import src.agents.researcher as researcher
+
+    failed_tool = FakeTool("stock_quote", '{"error": "provider timed out"}')
+    llm = ToolCallingLLM(
+        "stock_quote",
+        {"ticker": "AAPL"},
+        expected_result='{"error": "provider timed out"}',
+    )
+    monkeypatch.setattr(researcher, "ChatGoogleGenerativeAI", lambda **kwargs: llm)
+
+    async def discover_tools():
+        return [failed_tool]
+
+    monkeypatch.setattr(researcher, "get_mcp_tools", discover_tools)
+    node = researcher.create_researcher_node()
+    result = await node({
+        "query": "Check the latest quote",
+        "ticker": "AAPL",
+        "research_data": {},
+        "citations": [],
+        "errors": [],
+        "iteration_count": 0,
+    })
+
+    assert "stock_quote" not in result["research_data"]
+    assert any("provider timed out" in error for error in result["errors"])
 
 
 @pytest.mark.asyncio

@@ -211,7 +211,7 @@ def main():
                         resp = httpx.post(
                             f"{API_BASE}/research/analyze",
                             json={"query": query, "ticker": ticker},
-                            timeout=300,
+                            timeout=90,
                         )
 
                         progress_bar.progress(1.0)

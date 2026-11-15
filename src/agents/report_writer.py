@@ -9,6 +9,11 @@ from config.settings import GEMINI_API_KEY, GEMINI_MODEL
 from src.agents.state import ResearchState
 from src.citations.citation_tracker import CitationTracker
 from src.agents.tool_calling import stringify_model_content
+from src.agents.data_quality import (
+    assess_research_data,
+    format_data_quality,
+    redact_unsupported_current_claims,
+)
 
 
 REPORT_WRITER_PROMPT = """You are a professional Investment Research Report Writer.
@@ -37,6 +42,10 @@ Requirements:
 - Professional, concise language
 - Include a disclaimer that this is AI-generated research
 - Resolve or qualify claims marked contradicted, not found, or inconclusive by the fact-checker; never present them as verified.
+- Treat missing, stale, and unverified market metrics as unavailable.
+- Describe a market metric as current only when its explicit as-of timestamp is fresh.
+- Do not infer a current price, P/E, or market capitalization from a fetch time.
+- Do not reconcile conflicting values by choosing or averaging; disclose the values, sources, and dates as unverified.
 
 IMPORTANT: At the end, include a "Sources & Citations" section listing all references.
 """
@@ -59,6 +68,8 @@ def create_report_writer_node():
         research_data = state.get("research_data", {})
         fact_check = state.get("fact_check_results", {})
         citations = state.get("citations", [])
+        data_quality = assess_research_data(research_data)
+        quality_summary = format_data_quality(data_quality)
 
         # Format citations for the report
         citations_text = ""
@@ -92,6 +103,9 @@ def create_report_writer_node():
 **Available Citations:**
 {citations_text}
 
+**Deterministic Data-Quality Assessment (do not override):**
+{quality_summary}
+
 Generate the complete investment research report now.
 """
 
@@ -110,7 +124,8 @@ Generate the complete investment research report now.
             f"\n*Report generated on: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}*\n"
         )
 
-        final_report = report + disclaimer
+        report = redact_unsupported_current_claims(report, data_quality)
+        final_report = report + "\n\n" + quality_summary + disclaimer
 
         return {
             "final_report": final_report,

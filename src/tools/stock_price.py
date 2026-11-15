@@ -2,8 +2,19 @@
 """
 Stock price retrieval tool using yfinance (no API key needed).
 """
+import json
+from datetime import timedelta
+
 from langchain_core.tools import tool
-import yfinance as yf
+
+from config.settings import PROVIDER_TIMEOUT_SECONDS
+from src.tools.provider_utils import (
+    fetch_yfinance,
+    fetch_yfinance_info,
+    metric_provenance,
+    quote_metrics,
+    utc_now,
+)
 
 
 @tool
@@ -18,35 +29,15 @@ def get_stock_price(ticker: str) -> str:
         Current price, day range, 52-week range, volume, market cap, and P/E ratio.
     """
     try:
-        stock = yf.Ticker(ticker.upper())
-        info = stock.info
-
-        if not info or "currentPrice" not in info:
-            # Fallback: try fast_info
-            fast = stock.fast_info
-            return (
-                f"**{ticker.upper()}**\n"
-                f"- Last Price: ${fast.last_price:.2f}\n"
-                f"- Market Cap: ${fast.market_cap:,.0f}\n"
-                f"- 50-Day Avg: ${fast.fifty_day_average:.2f}\n"
-                f"- 200-Day Avg: ${fast.two_hundred_day_average:.2f}\n"
-            )
-
-        result = f"**{info.get('longName', ticker.upper())}** ({ticker.upper()})\n"
-        result += f"- Current Price: ${info.get('currentPrice', 'N/A')}\n"
-        result += f"- Previous Close: ${info.get('previousClose', 'N/A')}\n"
-        result += f"- Day Range: ${info.get('dayLow', 'N/A')} - ${info.get('dayHigh', 'N/A')}\n"
-        result += f"- 52-Week Range: ${info.get('fiftyTwoWeekLow', 'N/A')} - ${info.get('fiftyTwoWeekHigh', 'N/A')}\n"
-        result += f"- Volume: {info.get('volume', 'N/A'):,}\n"
-        result += f"- Market Cap: ${info.get('marketCap', 0):,.0f}\n"
-        result += f"- P/E Ratio (Trailing): {info.get('trailingPE', 'N/A')}\n"
-        result += f"- P/E Ratio (Forward): {info.get('forwardPE', 'N/A')}\n"
-        result += f"- Dividend Yield: {info.get('dividendYield', 'N/A')}\n"
-        result += f"- Sector: {info.get('sector', 'N/A')}\n"
-        result += f"- Industry: {info.get('industry', 'N/A')}\n"
-        return result
+        info = fetch_yfinance_info(ticker)
+        return json.dumps({
+            "ticker": ticker.upper(),
+            "name": info.get("longName", ticker.upper()),
+            "provider": "Yahoo Finance via yfinance",
+            "metrics": quote_metrics(info, "Yahoo Finance via yfinance"),
+        }, allow_nan=False)
     except Exception as e:
-        return f"Error fetching stock data for {ticker}: {str(e)}"
+        return json.dumps({"error": f"Yahoo Finance quote failed for {ticker}: {e}"})
 
 
 @tool
@@ -62,24 +53,65 @@ def get_stock_history(ticker: str, period: str = "1mo") -> str:
         Historical price data summary with key statistics.
     """
     try:
-        stock = yf.Ticker(ticker.upper())
-        hist = stock.history(period=period)
+        def load_history(stock):
+            history = stock.history(
+                period=period,
+                timeout=PROVIDER_TIMEOUT_SECONDS,
+            )
+            if history.empty:
+                raise RuntimeError(f"No historical data returned for {ticker}.")
+            return history
 
-        if hist.empty:
-            return f"No historical data found for {ticker}"
+        hist = fetch_yfinance(ticker, load_history)
 
-        result = f"**{ticker.upper()} — {period} Price History**\n"
-        result += f"- Start: ${hist['Close'].iloc[0]:.2f} ({hist.index[0].strftime('%Y-%m-%d')})\n"
-        result += f"- End: ${hist['Close'].iloc[-1]:.2f} ({hist.index[-1].strftime('%Y-%m-%d')})\n"
-        result += f"- High: ${hist['High'].max():.2f}\n"
-        result += f"- Low: ${hist['Low'].min():.2f}\n"
-        result += f"- Avg Close: ${hist['Close'].mean():.2f}\n"
-        result += f"- Avg Volume: {hist['Volume'].mean():,.0f}\n"
-
-        pct_change = ((hist['Close'].iloc[-1] - hist['Close'].iloc[0]) / hist['Close'].iloc[0]) * 100
-        result += f"- Period Return: {pct_change:+.2f}%\n"
-        result += f"- Volatility (Std Dev): ${hist['Close'].std():.2f}\n"
-
-        return result
+        closes = hist["Close"]
+        end_date = hist.index[-1]
+        fetched_at = utc_now()
+        as_of = end_date.to_pydatetime()
+        max_age = timedelta(days=7)
+        definitions = {
+            "start_close": ("provider-reported currency per share", "Closing share price on the first date in the requested period.", "Start Close"),
+            "end_close": ("provider-reported currency per share", "Closing share price on the last returned date in the requested period.", "End Close"),
+            "period_high": ("provider-reported currency per share", "Highest daily high during the requested period.", "High"),
+            "period_low": ("provider-reported currency per share", "Lowest daily low during the requested period.", "Low"),
+            "average_close": ("provider-reported currency per share", "Mean daily closing price during the requested period.", "Average Close"),
+            "average_volume": ("shares per trading day", "Mean daily trading volume during the requested period.", "Average Volume"),
+            "period_return": ("percent", "Percentage change from first to last returned closing price.", "Period Return"),
+            "volatility": ("provider-reported currency per share", "Standard deviation of daily closing prices during the requested period.", "Volatility"),
+        }
+        period_return = ((closes.iloc[-1] - closes.iloc[0]) / closes.iloc[0]) * 100
+        values = {
+            "start_close": float(closes.iloc[0]),
+            "end_close": float(closes.iloc[-1]),
+            "period_high": float(hist["High"].max()),
+            "period_low": float(hist["Low"].min()),
+            "average_close": float(closes.mean()),
+            "average_volume": float(hist["Volume"].mean()),
+            "period_return": float(period_return),
+            "volatility": float(closes.std()),
+        }
+        metrics = {}
+        for name, value in values.items():
+            units, definition, display_name = definitions[name]
+            metrics[name] = {
+                **metric_provenance(
+                    value,
+                    source="Yahoo Finance via yfinance",
+                    fetched_at=fetched_at,
+                    as_of=as_of,
+                    units=units,
+                    definition=definition,
+                    max_age=max_age,
+                ),
+                "display_name": display_name,
+            }
+        return json.dumps({
+            "ticker": ticker.upper(),
+            "period": period,
+            "provider": "Yahoo Finance via yfinance",
+            "start_date": hist.index[0].strftime("%Y-%m-%d"),
+            "end_date": end_date.strftime("%Y-%m-%d"),
+            "metrics": metrics,
+        }, allow_nan=False)
     except Exception as e:
-        return f"Error fetching history for {ticker}: {str(e)}"
+        return f"Error fetching history for {ticker}: {e}"

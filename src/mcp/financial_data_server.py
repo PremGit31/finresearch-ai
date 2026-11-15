@@ -7,8 +7,14 @@ import json
 import math
 from collections.abc import Mapping
 
-import yfinance as yf
 from mcp.server.fastmcp import FastMCP
+
+from src.tools.provider_utils import (
+    fetch_yfinance,
+    fetch_yfinance_info,
+    financial_statement_metrics,
+    quote_metrics,
+)
 
 mcp = FastMCP("FinancialData")
 
@@ -48,21 +54,11 @@ def _dump_json(value) -> str:
 def stock_quote(ticker: str) -> str:
     """Get real-time stock quote for a given ticker symbol."""
     try:
-        stock = yf.Ticker(ticker.upper())
-        info = stock.info
+        info = fetch_yfinance_info(ticker)
         return _dump_json({
             "ticker": ticker.upper(),
             "name": info.get("longName", ticker),
-            "price": info.get("currentPrice"),
-            "change": info.get("currentPrice", 0) - info.get("previousClose", 0),
-            "change_pct": (
-                (info.get("currentPrice", 0) - info.get("previousClose", 0))
-                / info.get("previousClose", 1) * 100
-            ),
-            "volume": info.get("volume"),
-            "market_cap": info.get("marketCap"),
-            "pe_ratio": info.get("trailingPE"),
-            "dividend_yield": info.get("dividendYield"),
+            "metrics": quote_metrics(info, "Yahoo Finance via yfinance"),
         })
     except Exception as e:
         return _dump_json({"error": str(e)})
@@ -72,37 +68,32 @@ def stock_quote(ticker: str) -> str:
 def company_financials(ticker: str) -> str:
     """Get comprehensive financial data including income statement, balance sheet, and cash flows."""
     try:
-        stock = yf.Ticker(ticker.upper())
+        def load_statements(stock):
+            output = {}
+            for name, statement in (
+                ("income_statement", stock.income_stmt),
+                ("balance_sheet", stock.balance_sheet),
+                ("cash_flow", stock.cashflow),
+            ):
+                if not statement.empty:
+                    latest = statement.iloc[:, 0]
+                    rows = {
+                        key: float(value)
+                        for key, value in latest.items()
+                        if not (hasattr(value, "__iter__") and not isinstance(value, str))
+                    }
+                    output[name] = financial_statement_metrics(
+                        rows,
+                        "Yahoo Finance via yfinance",
+                        statement.columns[0],
+                    )
+            return output
 
         result = {"ticker": ticker.upper()}
-
-        # Income statement
-        income = stock.income_stmt
-        if not income.empty:
-            latest = income.iloc[:, 0]
-            result["income_statement"] = {
-                k: float(v) for k, v in latest.items()
-                if not (hasattr(v, '__iter__') and not isinstance(v, str))
-            }
-
-        # Balance sheet
-        bs = stock.balance_sheet
-        if not bs.empty:
-            latest = bs.iloc[:, 0]
-            result["balance_sheet"] = {
-                k: float(v) for k, v in latest.items()
-                if not (hasattr(v, '__iter__') and not isinstance(v, str))
-            }
-
-        # Cash flow
-        cf = stock.cashflow
-        if not cf.empty:
-            latest = cf.iloc[:, 0]
-            result["cash_flow"] = {
-                k: float(v) for k, v in latest.items()
-                if not (hasattr(v, '__iter__') and not isinstance(v, str))
-            }
-
+        statements = fetch_yfinance(ticker, load_statements)
+        if not statements:
+            raise RuntimeError(f"No financial statements returned for {ticker.upper()}.")
+        result.update(statements)
         return _dump_json(result)
     except Exception as e:
         return _dump_json({"error": str(e)})
@@ -116,20 +107,11 @@ def compare_stocks(tickers: str) -> str:
         comparison = []
 
         for ticker in ticker_list:
-            stock = yf.Ticker(ticker)
-            info = stock.info
+            info = fetch_yfinance_info(ticker)
             comparison.append({
                 "ticker": ticker,
                 "name": info.get("longName", ticker),
-                "price": info.get("currentPrice"),
-                "market_cap": info.get("marketCap"),
-                "pe_ratio": info.get("trailingPE"),
-                "forward_pe": info.get("forwardPE"),
-                "peg_ratio": info.get("pegRatio"),
-                "profit_margin": info.get("profitMargins"),
-                "revenue_growth": info.get("revenueGrowth"),
-                "roe": info.get("returnOnEquity"),
-                "debt_to_equity": info.get("debtToEquity"),
+                "metrics": quote_metrics(info, "Yahoo Finance via yfinance"),
             })
 
         return _dump_json(comparison)
